@@ -1,0 +1,2 @@
+# Whole-project checks before anything reaches GitHub.
+yarn typecheck && yarn lint && yarn test

@@ -1,0 +1,17 @@
+# Keep the build context small and free of local/secret files.
+.git
+.github
+.next
+node_modules
+.yarn/cache
+.yarn/install-state.gz
+design-flow
+coverage
+*.log
+.env*
+!.env.example
+.DS_Store
+Dockerfile
+.dockerignore
+cloudbuild.yaml
+docs

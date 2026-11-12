@@ -1,0 +1,68 @@
+# Build, push and deploy paysplit-frontend to Cloud Run.
+#
+# Uses the substitutions the Cloud Run console sets on the trigger it creates
+# ("Continuously deploy from a repository"): _AR_HOSTNAME, _AR_PROJECT_ID,
+# _AR_REPOSITORY, _SERVICE_NAME, _DEPLOY_REGION, _PLATFORM, _TRIGGER_ID.
+# $REPO_NAME and $COMMIT_SHA are only populated on triggered builds.
+#
+# Add one substitution of our own to the trigger: _API_BASE_URL, the backend
+# origin including /api/v1. It is baked into the client bundle at build time,
+# so changing it needs a rebuild. Leave it empty until the API is ready.
+#
+# The defaults below match our setup (Artifact Registry repository
+# "cloud-run-source-deploy" in europe-west1). Values set on the trigger win.
+
+substitutions:
+  _AR_HOSTNAME: europe-west1-docker.pkg.dev
+  _AR_REPOSITORY: cloud-run-source-deploy
+  _DEPLOY_REGION: europe-west1
+  _PLATFORM: managed
+  _SERVICE_NAME: paysplit-frontend
+  _API_BASE_URL: ""
+
+steps:
+  - id: Build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --no-cache
+      - -t
+      - $_AR_HOSTNAME/$_AR_PROJECT_ID/$_AR_REPOSITORY/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA
+      - --build-arg=NEXT_PUBLIC_API_BASE_URL=$_API_BASE_URL
+      - .
+      - -f
+      - Dockerfile
+
+  - id: Push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - $_AR_HOSTNAME/$_AR_PROJECT_ID/$_AR_REPOSITORY/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA
+
+  # "run deploy" rather than the console's "run services update" so the first
+  # build also works when the service does not exist yet.
+  - id: Deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - $_SERVICE_NAME
+      - --platform=$_PLATFORM
+      - --image=$_AR_HOSTNAME/$_AR_PROJECT_ID/$_AR_REPOSITORY/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA
+      - --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID
+      - --region=$_DEPLOY_REGION
+      - --port=8080
+      - --quiet
+
+images:
+  - $_AR_HOSTNAME/$_AR_PROJECT_ID/$_AR_REPOSITORY/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA
+
+options:
+  substitutionOption: ALLOW_LOOSE
+  logging: CLOUD_LOGGING_ONLY
+
+tags:
+  - gcp-cloud-build-deploy-cloud-run
+  - gcp-cloud-build-deploy-cloud-run-managed
+  - paysplit-frontend
