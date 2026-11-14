@@ -1,0 +1,20 @@
+# Local Postgres for development and the test suite (Neon is used in production).
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: paysplit
+      POSTGRES_PASSWORD: paysplit
+      POSTGRES_DB: paysplit
+    ports:
+      - "54329:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paysplit"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - paysplit-db:/var/lib/postgresql/data
+
+volumes:
+  paysplit-db:

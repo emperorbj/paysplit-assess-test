@@ -1,0 +1,55 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+# In the Render dashboard: New → Blueprint → pick this repo. Secrets marked
+# `sync: false` are asked for once and never stored in git.
+services:
+  - type: web
+    name: paysplit-api
+    runtime: docker
+    rootDir: paysplit-backend
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: ohio # closest to Neon aws-us-east-2
+    healthCheckPath: /health
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - paysplit-backend/**
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        value: "1"
+      - key: LOG_LEVEL
+        value: info
+      - key: CORS_ORIGINS
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: KYC_PROVIDER
+        value: dojah
+      - key: DOJAH_BASE_URL
+        value: https://sandbox.dojah.io
+      - key: DOJAH_APP_ID
+        sync: false
+      - key: DOJAH_SECRET_KEY
+        sync: false
+      - key: KYC_ENFORCE_NAME_MATCH
+        value: "false"
+      - key: DOJAH_SANDBOX_TRUST_CHECKS
+        value: "true"
+      - key: AWS_ENDPOINT_URL_S3
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        value: us-east-2
+      - key: STORAGE_BUCKET
+        value: paysplit
+      - key: ENABLE_SIMULATIONS
+        value: "true"

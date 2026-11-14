@@ -1,0 +1,100 @@
+# Runs on every PR and on pushes to develop/main. GitHub only reads workflows
+# from the repository root, so both apps are checked from here.
+name: CI
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (paysplit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: paysplit
+    env:
+      HUSKY: "0" # no git hooks in CI
+      # Build-time only; any valid URL works for compiling.
+      NEXT_PUBLIC_API_BASE_URL: https://api.example.invalid/api/v1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable Yarn 4
+        run: corepack enable && corepack prepare yarn@4.18.1 --activate
+
+      - name: Cache Yarn
+        uses: actions/cache@v4
+        with:
+          path: paysplit/.yarn/cache
+          key: yarn-${{ runner.os }}-${{ hashFiles('paysplit/yarn.lock') }}
+          restore-keys: yarn-${{ runner.os }}-
+
+      - run: yarn install --immutable
+      - name: Format
+        run: yarn format:check
+      - name: Lint
+        run: yarn lint --max-warnings=0
+      - name: Typecheck
+        run: yarn typecheck
+      - name: Unit tests
+        run: yarn test
+      - name: Build
+        run: yarn build
+
+  backend:
+    name: Backend (paysplit-backend)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: paysplit-backend
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: paysplit
+          POSTGRES_PASSWORD: paysplit
+          POSTGRES_DB: paysplit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U paysplit"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql://paysplit:paysplit@localhost:5432/paysplit_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: paysplit-backend/package-lock.json
+
+      - run: npm ci
+      - name: Format
+        run: npm run format:check
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Tests (real Postgres, mock KYC)
+        run: npm test
+      - name: Build
+        run: npm run build
+      - name: Docker image builds
+        run: docker build -t paysplit-api:ci .

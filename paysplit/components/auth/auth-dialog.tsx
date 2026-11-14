@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation"
 import { EyeIcon, EyeOffIcon, StarIcon } from "lucide-react"
 
 import { LogoMark } from "@/components/brand/logo"
-import { OtpInput } from "@/components/auth/otp-input"
 import {
   isStrongPassword,
   PasswordRequirements,
@@ -21,52 +20,24 @@ import {
   ModalTitle,
 } from "@/components/ui/modal"
 import { SuccessBadge } from "@/components/ui/success-badge"
-import {
-  useForgotPassword,
-  useLogin,
-  useResendEmailCode,
-  useResetPassword,
-  useSetPassword,
-  useSignup,
-  useVerifyEmail,
-  useVerifyResetCode,
-} from "@/hooks/auth/use-auth"
-import { toApiError } from "@/lib/api/errors"
-import { ACCOUNT_SETUP_INCOMPLETE } from "@/types/api/auth"
+import { useLogin, useSignup } from "@/hooks/auth/use-auth"
 
-export type AuthStep =
-  | "login"
-  | "signup"
-  | "verify"
-  | "password"
-  | "welcome"
-  | "forgot"
-  | "forgot-verify"
-  | "forgot-reset"
+export type AuthStep = "login" | "signup" | "welcome"
 
 type AuthDialogProps = {
   step: AuthStep | null
   onStepChange: (step: AuthStep | null) => void
 }
 
-/** Default cooldown when the backend doesn't say (seconds). */
-const RESEND_COOLDOWN = 60
-
 export function AuthDialog({ step, onStepChange }: AuthDialogProps) {
   const router = useRouter()
-  const [email, setEmail] = React.useState("")
   const [firstName, setFirstName] = React.useState("")
-  const [resendAt, setResendAt] = React.useState(0)
-  // Short-lived signup token: memory only, never persisted.
-  const [setupToken, setSetupToken] = React.useState<string | null>(null)
 
   // Keep the last step rendered while the close animation plays.
   const [renderedStep, setRenderedStep] = React.useState<AuthStep>("login")
   if (step && step !== renderedStep) setRenderedStep(step)
 
   const close = () => onStepChange(null)
-  const startCooldown = (seconds = RESEND_COOLDOWN) =>
-    setResendAt(Date.now() + seconds * 1000)
 
   return (
     <Modal
@@ -78,18 +49,7 @@ export function AuthDialog({ step, onStepChange }: AuthDialogProps) {
     >
       {renderedStep === "login" && (
         <LoginStep
-          defaultEmail={email}
           onCreateAccount={() => onStepChange("signup")}
-          onForgotPassword={(value) => {
-            setEmail(value)
-            onStepChange("forgot")
-          }}
-          onSetupIncomplete={(value) => {
-            // Backend already emailed a fresh code.
-            setEmail(value)
-            startCooldown()
-            onStepChange("verify")
-          }}
           onSuccess={() => {
             close()
             router.push("/dashboard")
@@ -99,32 +59,7 @@ export function AuthDialog({ step, onStepChange }: AuthDialogProps) {
       {renderedStep === "signup" && (
         <SignupStep
           onSignIn={() => onStepChange("login")}
-          onSuccess={({ email, firstName, resendAvailableInSeconds }) => {
-            setEmail(email)
-            setFirstName(firstName)
-            startCooldown(resendAvailableInSeconds)
-            onStepChange("verify")
-          }}
-        />
-      )}
-      {renderedStep === "verify" && (
-        <EmailVerifyStep
-          email={email}
-          resendAt={resendAt}
-          onResent={startCooldown}
-          onSuccess={({ setupToken, firstName }) => {
-            setSetupToken(setupToken)
-            setFirstName(firstName)
-            onStepChange("password")
-          }}
-        />
-      )}
-      {renderedStep === "password" && (
-        <CreatePasswordStep
-          setupToken={setupToken}
-          onExpired={() => onStepChange("verify")}
           onSuccess={(name) => {
-            setSetupToken(null)
             setFirstName(name)
             onStepChange("welcome")
           }}
@@ -141,31 +76,6 @@ export function AuthDialog({ step, onStepChange }: AuthDialogProps) {
             close()
             router.push("/kyc")
           }}
-        />
-      )}
-      {renderedStep === "forgot" && (
-        <ForgotEmailStep
-          defaultEmail={email}
-          onBack={() => onStepChange("login")}
-          onSuccess={(value) => {
-            setEmail(value)
-            startCooldown()
-            onStepChange("forgot-verify")
-          }}
-        />
-      )}
-      {renderedStep === "forgot-verify" && (
-        <ResetVerifyStep
-          email={email}
-          resendAt={resendAt}
-          onResent={startCooldown}
-          onSuccess={() => onStepChange("forgot-reset")}
-        />
-      )}
-      {renderedStep === "forgot-reset" && (
-        <ResetPasswordStep
-          email={email}
-          onSuccess={() => onStepChange("login")}
         />
       )}
     </Modal>
@@ -265,64 +175,16 @@ function PasswordInput({
   )
 }
 
-/** Seconds left until `target` (ms timestamp), ticking every second. */
-function useSecondsUntil(target: number) {
-  const [now, setNow] = React.useState(() => Date.now())
-  React.useEffect(() => {
-    if (target <= Date.now()) return
-    const id = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(id)
-  }, [target])
-  return Math.max(0, Math.ceil((target - now) / 1000))
-}
-
-function ResendPrompt({
-  resendAt,
-  pending,
-  onResend,
-}: {
-  resendAt: number
-  pending: boolean
-  onResend: () => void
-}) {
-  const seconds = useSecondsUntil(resendAt)
-  const label = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
-  return (
-    <p className="mt-4 text-center text-sm text-[#475467]" aria-live="polite">
-      Didn’t get a code?{" "}
-      {seconds > 0 ? (
-        <span className="tabular-nums">Resend in {label}</span>
-      ) : (
-        <button
-          type="button"
-          onClick={onResend}
-          disabled={pending}
-          className="underline underline-offset-4 hover:text-ink disabled:opacity-50"
-        >
-          {pending ? "Sending…" : "Click to resend"}
-        </button>
-      )}
-      .
-    </p>
-  )
-}
-
 /* ---------------------------------- Login --------------------------------- */
 
 function LoginStep({
-  defaultEmail,
   onCreateAccount,
-  onForgotPassword,
-  onSetupIncomplete,
   onSuccess,
 }: {
-  defaultEmail: string
   onCreateAccount: () => void
-  onForgotPassword: (email: string) => void
-  onSetupIncomplete: (email: string) => void
   onSuccess: () => void
 }) {
-  const [emailValue, setEmailValue] = React.useState(defaultEmail)
+  const [emailValue, setEmailValue] = React.useState("")
   const [remember, setRemember] = React.useState(false)
   const login = useLogin()
 
@@ -339,14 +201,7 @@ function LoginStep({
             password: String(data.get("password") ?? ""),
             rememberMe: remember,
           },
-          {
-            onSuccess,
-            onError: (error) => {
-              if (toApiError(error).code === ACCOUNT_SETUP_INCOMPLETE) {
-                onSetupIncomplete(email)
-              }
-            },
-          }
+          { onSuccess }
         )
       }}
     >
@@ -378,19 +233,12 @@ function LoginStep({
           />
         </div>
 
-        <div className="flex items-center justify-between pt-2">
+        <div className="pt-2">
           <Checkbox
             label="Remember for 30 days"
             checked={remember}
             onCheckedChange={setRemember}
           />
-          <button
-            type="button"
-            onClick={() => onForgotPassword(emailValue.trim())}
-            className="text-sm text-brand hover:underline"
-          >
-            Forgot password
-          </button>
         </div>
       </div>
 
@@ -417,18 +265,19 @@ function LoginStep({
 
 /* --------------------------------- Sign up -------------------------------- */
 
+/** Names, email and password in one step; the account is signed in on success. */
 function SignupStep({
   onSignIn,
   onSuccess,
 }: {
   onSignIn: () => void
-  onSuccess: (data: {
-    email: string
-    firstName: string
-    resendAvailableInSeconds: number
-  }) => void
+  onSuccess: (firstName: string) => void
 }) {
+  const [password, setPassword] = React.useState("")
+  const [confirm, setConfirm] = React.useState("")
   const signup = useSignup()
+  const mismatch = confirm !== "" && confirm !== password
+  const valid = isStrongPassword(password) && password === confirm
 
   return (
     <form
@@ -436,24 +285,21 @@ function SignupStep({
       onSubmit={(event) => {
         event.preventDefault()
         const data = new FormData(event.currentTarget)
-        const dto = {
-          firstName: String(data.get("firstName") ?? "").trim(),
-          lastName: String(data.get("lastName") ?? "").trim(),
-          email: String(data.get("email") ?? "").trim(),
-        }
-        signup.mutate(dto, {
-          onSuccess: (response) =>
-            onSuccess({
-              email: response.email,
-              firstName: dto.firstName,
-              resendAvailableInSeconds: response.resendAvailableInSeconds,
-            }),
-        })
+        signup.mutate(
+          {
+            firstName: String(data.get("firstName") ?? "").trim(),
+            lastName: String(data.get("lastName") ?? "").trim(),
+            email: String(data.get("email") ?? "").trim(),
+            password,
+            confirmPassword: confirm,
+          },
+          { onSuccess: (auth) => onSuccess(auth.user.firstName) }
+        )
       }}
     >
       <StepHeader
         title="Create an account"
-        description="Enter your email to create account"
+        description="Enter your details to create your account"
       />
 
       <div className="mt-6 space-y-4 px-6">
@@ -491,190 +337,23 @@ function SignupStep({
             required
           />
         </div>
-      </div>
 
-      <ModalDivider />
-
-      <div className="px-6">
-        <LoadingButton
-          type="submit"
-          size="xl"
-          className="w-full"
-          loading={signup.isPending}
-        >
-          Confirm
-        </LoadingButton>
-        <FooterPrompt
-          prompt="Already have an account?"
-          action="Sign in"
-          onAction={onSignIn}
-        />
-      </div>
-    </form>
-  )
-}
-
-/* ------------------------------ Verify (signup) --------------------------- */
-
-function CodeForm({
-  title,
-  email,
-  submitLabel,
-  pending,
-  resendAt,
-  resendPending,
-  onResend,
-  onSubmit,
-}: {
-  title: string
-  email: string
-  submitLabel: string
-  pending: boolean
-  resendAt: number
-  resendPending: boolean
-  onResend: () => void
-  onSubmit: (code: string, reset: () => void) => void
-}) {
-  const [code, setCode] = React.useState("")
-
-  return (
-    <form
-      className="pb-6"
-      onSubmit={(event) => {
-        event.preventDefault()
-        onSubmit(code, () => setCode(""))
-      }}
-    >
-      <StepHeader
-        title={title}
-        description={<>We&apos;ve sent a code to {email}</>}
-      />
-
-      <div className="mt-8 px-6">
-        <OtpInput value={code} onChange={setCode} autoFocus />
-        <ResendPrompt
-          resendAt={resendAt}
-          pending={resendPending}
-          onResend={() => {
-            setCode("")
-            onResend()
-          }}
-        />
-        <LoadingButton
-          type="submit"
-          size="xl"
-          className="mt-6 w-full"
-          disabled={code.length < 6}
-          loading={pending}
-        >
-          {submitLabel}
-        </LoadingButton>
-      </div>
-    </form>
-  )
-}
-
-function EmailVerifyStep({
-  email,
-  resendAt,
-  onResent,
-  onSuccess,
-}: {
-  email: string
-  resendAt: number
-  onResent: (seconds?: number) => void
-  onSuccess: (data: { setupToken: string; firstName: string }) => void
-}) {
-  const verify = useVerifyEmail()
-  const resend = useResendEmailCode()
-
-  return (
-    <CodeForm
-      title="Please check your email"
-      email={email}
-      submitLabel="Verify email"
-      pending={verify.isPending}
-      resendAt={resendAt}
-      resendPending={resend.isPending}
-      onResend={() =>
-        resend.mutate(email, {
-          onSuccess: (data) => onResent(data.resendAvailableInSeconds),
-        })
-      }
-      onSubmit={(code, reset) =>
-        verify.mutate(
-          { email, code },
-          {
-            onSuccess: (data) =>
-              onSuccess({
-                setupToken: data.setupToken,
-                firstName: data.user.firstName,
-              }),
-            onError: reset,
-          }
-        )
-      }
-    />
-  )
-}
-
-/* ----------------------------- Create password ---------------------------- */
-
-function CreatePasswordStep({
-  setupToken,
-  onExpired,
-  onSuccess,
-}: {
-  setupToken: string | null
-  onExpired: () => void
-  onSuccess: (firstName: string) => void
-}) {
-  const [password, setPassword] = React.useState("")
-  const [confirm, setConfirm] = React.useState("")
-  const setPasswordMutation = useSetPassword()
-  const mismatch = confirm !== "" && confirm !== password
-  const valid = isStrongPassword(password) && password === confirm
-
-  return (
-    <form
-      className="pb-6"
-      onSubmit={(event) => {
-        event.preventDefault()
-        if (!setupToken) return onExpired()
-        setPasswordMutation.mutate(
-          { setupToken, password, confirmPassword: confirm },
-          {
-            onSuccess: (auth) => onSuccess(auth.user.firstName),
-            // Setup token expired (15 min): verify the email again.
-            onError: (error) => {
-              if (toApiError(error).status === 401) onExpired()
-            },
-          }
-        )
-      }}
-    >
-      <StepHeader
-        title="Create a password"
-        description="Choose a strong password to secure your account"
-      />
-
-      <div className="mt-6 space-y-4 px-6">
         <div className="space-y-2">
-          <Label htmlFor="setup-password">Password</Label>
+          <Label htmlFor="signup-password">Password</Label>
           <PasswordInput
-            id="setup-password"
+            id="signup-password"
             name="password"
             autoComplete="new-password"
             value={password}
             onChange={setPassword}
-            describedBy="setup-password-rules"
+            describedBy="signup-password-rules"
           />
           <PasswordRequirements password={password} className="pt-1" />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="setup-confirm">Confirm password</Label>
+          <Label htmlFor="signup-confirm">Confirm password</Label>
           <PasswordInput
-            id="setup-confirm"
+            id="signup-confirm"
             name="confirmPassword"
             autoComplete="new-password"
             value={confirm}
@@ -696,10 +375,15 @@ function CreatePasswordStep({
           size="xl"
           className="w-full"
           disabled={!valid}
-          loading={setPasswordMutation.isPending}
+          loading={signup.isPending}
         >
           Create account
         </LoadingButton>
+        <FooterPrompt
+          prompt="Already have an account?"
+          action="Sign in"
+          onAction={onSignIn}
+        />
       </div>
     </form>
   )
@@ -781,162 +465,5 @@ function WelcomeCard({
       <h3 className="mt-4 text-lg font-semibold text-[#101828]">{title}</h3>
       <p className="mt-2 text-sm text-[#475467]">{description}</p>
     </div>
-  )
-}
-
-/* ----------------------------- Forgot password ---------------------------- */
-
-function ForgotEmailStep({
-  defaultEmail,
-  onBack,
-  onSuccess,
-}: {
-  defaultEmail: string
-  onBack: () => void
-  onSuccess: (email: string) => void
-}) {
-  const [email, setEmail] = React.useState(defaultEmail)
-  const forgot = useForgotPassword()
-
-  return (
-    <form
-      className="pb-6"
-      onSubmit={(event) => {
-        event.preventDefault()
-        const value = email.trim()
-        forgot.mutate(value, { onSuccess: () => onSuccess(value) })
-      }}
-    >
-      <StepHeader
-        title="Forgot password?"
-        description="Enter your email and we’ll send you a reset code"
-      />
-      <div className="mt-6 space-y-2 px-6">
-        <Label htmlFor="forgot-email">Email</Label>
-        <Input
-          id="forgot-email"
-          type="email"
-          autoComplete="email"
-          placeholder="Enter your email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          autoFocus
-          required
-        />
-      </div>
-      <ModalDivider />
-      <div className="px-6">
-        <LoadingButton
-          type="submit"
-          size="xl"
-          className="w-full"
-          loading={forgot.isPending}
-        >
-          Send reset code
-        </LoadingButton>
-        <FooterPrompt
-          prompt="Remembered it?"
-          action="Back to login"
-          onAction={onBack}
-        />
-      </div>
-    </form>
-  )
-}
-
-function ResetVerifyStep({
-  email,
-  resendAt,
-  onResent,
-  onSuccess,
-}: {
-  email: string
-  resendAt: number
-  onResent: (seconds?: number) => void
-  onSuccess: () => void
-}) {
-  const verify = useVerifyResetCode()
-  // Re-requesting a reset code is the "resend" for this flow.
-  const resend = useForgotPassword()
-
-  return (
-    <CodeForm
-      title="Enter your reset code"
-      email={email}
-      submitLabel="Verify code"
-      pending={verify.isPending}
-      resendAt={resendAt}
-      resendPending={resend.isPending}
-      onResend={() => resend.mutate(email, { onSuccess: () => onResent() })}
-      onSubmit={(code, reset) =>
-        verify.mutate({ email, code }, { onSuccess, onError: reset })
-      }
-    />
-  )
-}
-
-function ResetPasswordStep({
-  email,
-  onSuccess,
-}: {
-  email: string
-  onSuccess: () => void
-}) {
-  const [password, setPassword] = React.useState("")
-  const [confirm, setConfirm] = React.useState("")
-  const reset = useResetPassword()
-  const mismatch = confirm !== "" && confirm !== password
-  const valid = isStrongPassword(password) && password === confirm
-
-  return (
-    <form
-      className="pb-6"
-      onSubmit={(event) => {
-        event.preventDefault()
-        reset.mutate({ email, newPassword: password }, { onSuccess })
-      }}
-    >
-      <StepHeader title="Set a new password" description={`For ${email}`} />
-      <div className="mt-6 space-y-4 px-6">
-        <div className="space-y-2">
-          <Label htmlFor="reset-password">New password</Label>
-          <PasswordInput
-            id="reset-password"
-            name="newPassword"
-            autoComplete="new-password"
-            value={password}
-            onChange={setPassword}
-          />
-          <PasswordRequirements password={password} className="pt-1" />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="reset-confirm">Confirm new password</Label>
-          <PasswordInput
-            id="reset-confirm"
-            name="confirmPassword"
-            autoComplete="new-password"
-            value={confirm}
-            onChange={setConfirm}
-          />
-          {mismatch && (
-            <p role="alert" className="text-sm text-destructive">
-              Passwords don’t match.
-            </p>
-          )}
-        </div>
-      </div>
-      <ModalDivider />
-      <div className="px-6">
-        <LoadingButton
-          type="submit"
-          size="xl"
-          className="w-full"
-          disabled={!valid}
-          loading={reset.isPending}
-        >
-          Reset password
-        </LoadingButton>
-      </div>
-    </form>
   )
 }

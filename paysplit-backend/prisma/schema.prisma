@@ -1,0 +1,308 @@
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  runtime             = "nodejs"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ──────────────────────────────────────────────────────────────────
+
+enum KycState {
+  not_started
+  in_progress
+  verified
+  failed
+}
+
+enum IdentityRegion {
+  nigeria
+  international
+}
+
+enum IdentityMethod {
+  bvn
+  nin
+  passport
+  drivers_license
+}
+
+enum SalaryAccountStatus {
+  not_issued
+  active
+}
+
+enum RuleMethod {
+  fixed
+  percentage
+}
+
+enum RuleStatus {
+  active
+  paused
+}
+
+enum SplitTrigger {
+  auto
+  manual
+}
+
+enum SplitRunStatus {
+  processing
+  completed
+}
+
+enum TransactionType {
+  salary_credit
+  wallet_allocation
+  wallet_withdrawal
+}
+
+enum TransactionStatus {
+  pending
+  success
+  failed
+  reversed
+}
+
+// ─── Identity ───────────────────────────────────────────────────────────────
+
+model User {
+  id              String    @id @default(uuid()) @db.Uuid
+  email           String    @unique
+  passwordHash    String
+  firstName       String
+  lastName        String
+  phoneNumber     String?
+  countryCode     String?   @db.Char(2)
+  currencyCode    String?   @db.Char(3)
+  profileImageKey String?
+  kycStatus       KycState  @default(not_started)
+  role            String    @default("user")
+  isActive        Boolean   @default(true)
+  /// Bumped on logout and password change: every older token stops working.
+  tokenVersion    Int       @default(0)
+  passwordSetAt   DateTime  @default(now())
+  lastLoginAt     DateTime?
+  deactivatedAt   DateTime?
+  deletedAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  kyc                     KycVerification?
+  income                  IncomeProfile?
+  salaryAccount           SalaryAccount?
+  notificationPreferences NotificationPreference?
+  wallets                 Wallet[]
+  splitRules              SplitRule[]
+  splitRuns               SplitRun[]
+  transactions            Transaction[]
+  notifications           Notification[]
+}
+
+/// One row per user. Only a masked ID number is kept, never the full BVN/NIN.
+model KycVerification {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @unique @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  identityStatus        KycState        @default(not_started)
+  identityRegion        IdentityRegion?
+  identityMethod        IdentityMethod?
+  maskedIdNumber        String?
+  identityFailureReason String?
+  identityAttempts      Int             @default(0)
+  identityLockedUntil   DateTime?
+  identityReference     String?
+  identityVerifiedAt    DateTime?
+
+  livenessStatus        KycState  @default(not_started)
+  livenessFailureReason String?
+  livenessAttempts      Int       @default(0)
+  livenessLockedUntil   DateTime?
+  livenessReference     String?
+  livenessVerifiedAt    DateTime?
+
+  /// A Nigerian BVN/NIN has been verified (needed to issue a salary account).
+  bankIdentityVerified Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── Salary ─────────────────────────────────────────────────────────────────
+
+model IncomeProfile {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @unique @db.Uuid
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  employerName  String
+  monthlyAmount BigInt
+  currency      String   @default("NGN") @db.Char(3)
+  /// 1–31; 31 means the last day of shorter months.
+  paydayDay     Int
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model SalaryAccount {
+  id            String              @id @default(uuid()) @db.Uuid
+  userId        String              @unique @db.Uuid
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status        SalaryAccountStatus @default(not_issued)
+  accountNumber String?             @unique
+  bankName      String?
+  balance       BigInt              @default(0)
+  currency      String              @default("NGN") @db.Char(3)
+  issuedAt      DateTime?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+}
+
+// ─── Wallets and rules ──────────────────────────────────────────────────────
+
+model Category {
+  /// Stable, human-readable id (e.g. "housing"), shared with the frontend.
+  id           String        @id
+  name         String
+  slug         String        @unique
+  sortOrder    Int           @default(0)
+  wallets      Wallet[]
+  transactions Transaction[]
+}
+
+model Wallet {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @db.Uuid
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  categoryId   String
+  category     Category @relation(fields: [categoryId], references: [id])
+  accentColor  String
+  targetAmount BigInt?
+  balance      BigInt   @default(0)
+  currency     String   @default("NGN") @db.Char(3)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  splitRule    SplitRule?
+  transactions Transaction[]
+
+  @@unique([userId, name])
+  @@index([userId, createdAt])
+}
+
+model SplitRule {
+  id          String     @id @default(uuid()) @db.Uuid
+  userId      String     @db.Uuid
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// One rule per destination wallet.
+  walletId    String     @unique @db.Uuid
+  wallet      Wallet     @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  name        String
+  /// 1–100, lower runs first.
+  priority    Int
+  status      RuleStatus @default(active)
+  method      RuleMethod
+  /// method = fixed: the amount in kobo.
+  fixedAmount BigInt?
+  /// method = percentage: basis points (20.5% = 2050), so no floats are stored.
+  percentBps  Int?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  transactions Transaction[]
+
+  @@index([userId, priority])
+}
+
+model SplitRun {
+  id                  String         @id @default(uuid()) @db.Uuid
+  userId              String         @db.Uuid
+  user                User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trigger             SplitTrigger
+  status              SplitRunStatus @default(processing)
+  /// Amount percentages are worked out from (the credit, or the monthly salary).
+  baseAmount          BigInt
+  /// Salary account balance when the run started.
+  availableAmount     BigInt
+  toWallets           BigInt         @default(0)
+  fees                BigInt         @default(0)
+  /// Rules that were skipped: [{ ruleId, name, plannedAmount, reason }]
+  skipped             Json           @default("[]")
+  creditTransactionId String?        @db.Uuid
+  createdAt           DateTime       @default(now())
+  completedAt         DateTime?
+
+  transactions Transaction[]
+
+  @@index([userId, createdAt])
+}
+
+// ─── Ledger ─────────────────────────────────────────────────────────────────
+
+/// Every money movement for a user. Wording and sign depend on which list it is
+/// shown in (salary account or wallet), so that is decided when presenting.
+model Transaction {
+  id                  String            @id @default(uuid()) @db.Uuid
+  userId              String            @db.Uuid
+  user                User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reference           String            @unique
+  type                TransactionType
+  status              TransactionStatus @default(success)
+  amount              BigInt
+  fee                 BigInt            @default(0)
+  currency            String            @default("NGN") @db.Char(3)
+  narration           String?
+  /// Who sent a salary credit (employer) or the wallet name, kept even if the
+  /// wallet is later deleted.
+  counterpartyName    String
+  walletId            String?           @db.Uuid
+  wallet              Wallet?           @relation(fields: [walletId], references: [id], onDelete: SetNull)
+  categoryId          String?
+  category            Category?         @relation(fields: [categoryId], references: [id])
+  splitRuleId         String?           @db.Uuid
+  splitRule           SplitRule?        @relation(fields: [splitRuleId], references: [id], onDelete: SetNull)
+  splitRunId          String?           @db.Uuid
+  splitRun            SplitRun?         @relation(fields: [splitRunId], references: [id], onDelete: SetNull)
+  providerReference   String?
+  settlementReference String?
+  /// Client-supplied key so a retried simulated credit is applied once.
+  idempotencyKey      String?
+  createdAt           DateTime          @default(now())
+  completedAt         DateTime?
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
+  @@index([walletId, createdAt])
+}
+
+// ─── Notifications ──────────────────────────────────────────────────────────
+
+model Notification {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  body      String
+  data      Json?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
+}
+
+model NotificationPreference {
+  userId      String   @id @db.Uuid
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// { push: { salaryReceived: true, ... }, sms: {...}, email: {...} }
+  preferences Json
+  updatedAt   DateTime @updatedAt
+}

@@ -66,6 +66,7 @@ export function useUpdateKycProfile(options?: ToastOptions) {
 
 export function useVerifyNigeriaIdentity(options?: ToastOptions) {
   const after = useAfterKycStep()
+  const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (dto: NigeriaIdentityDto) =>
       kycService.verifyNigeriaIdentity(dto),
@@ -73,12 +74,17 @@ export function useVerifyNigeriaIdentity(options?: ToastOptions) {
       await after(data)
       toastSuccess(data.message, "Identity verified.", options)
     },
-    onError: (error) => toastError(error, options),
+    onError: (error) => {
+      toastError(error, options)
+      // A failed attempt changes failureReason and attemptsRemaining.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.kyc.status() })
+    },
   })
 }
 
 export function useUploadInternationalIdentity(options?: ToastOptions) {
   const after = useAfterKycStep()
+  const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (dto: InternationalIdentityDto) =>
       kycService.uploadInternationalIdentity(dto),
@@ -86,7 +92,11 @@ export function useUploadInternationalIdentity(options?: ToastOptions) {
       await after(data)
       toastSuccess(data.message, "Document accepted.", options)
     },
-    onError: (error) => toastError(error, options),
+    onError: (error) => {
+      toastError(error, options)
+      // A failed attempt changes failureReason and attemptsRemaining.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.kyc.status() })
+    },
   })
 }
 

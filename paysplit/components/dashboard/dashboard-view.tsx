@@ -81,6 +81,14 @@ export function DashboardView({ openSetup }: { openSetup: boolean }) {
         hasActivity={
           (cashFlow.data?.totals.inflow ?? 0) > 0 || data.wallets.total > 0
         }
+        simulation={
+          data.salaryAccount.status === "active"
+            ? {
+                defaultAmount: data.income?.monthlyAmount ?? null,
+                defaultSender: data.income?.employerName ?? null,
+              }
+            : undefined
+        }
       />
 
       {!onboardingComplete && <OnboardingBanner onboarding={checklist} />}

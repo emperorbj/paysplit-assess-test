@@ -61,24 +61,15 @@ export type MessageResponse = { message: string }
 
 /* ---------------------------------- Signup --------------------------------- */
 
-export type SignupDto = { firstName: string; lastName: string; email: string }
-
-export type CodeSentResponse = MessageResponse & {
+/** One step: names, email and password. Returns an `AuthResponse` (signed in). */
+export type SignupDto = {
+  firstName: string
+  lastName: string
   email: string
-  /** Drives the "Resend in 0:45" countdown */
-  resendAvailableInSeconds: number
+  password: string
+  confirmPassword: string
+  rememberMe?: boolean
 }
-
-export type VerifyCodeDto = { email: string; code: string }
-
-export type VerifyEmailResponse = MessageResponse & {
-  /** Short-lived token for POST /auth/password/set; never persist it */
-  setupToken: string
-  setupTokenExpiresIn: number
-  user: User
-}
-
-export type SetPasswordDto = { password: string; confirmPassword: string }
 
 /* ---------------------------------- Login ---------------------------------- */
 
@@ -95,12 +86,7 @@ export type AuthResponse = {
 
 export type MeResponse = { user: User; onboarding: Onboarding }
 
-/* ----------------------------- Forgot password ----------------------------- */
-
-export type ResetPasswordDto = { email: string; newPassword: string }
-
-/** Backend error code: login before signup was finished (a new code is emailed). */
-export const ACCOUNT_SETUP_INCOMPLETE = "ACCOUNT_SETUP_INCOMPLETE"
+/* ----------------------------- Change password ----------------------------- */
 
 export type ChangePasswordDto = {
   currentPassword: string

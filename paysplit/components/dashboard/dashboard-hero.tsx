@@ -4,6 +4,7 @@ import * as React from "react"
 import Link from "next/link"
 import { BellIcon, ChevronRightIcon, PlusIcon } from "lucide-react"
 
+import { SimulateSalaryButton } from "@/components/dashboard/simulate-salary-button"
 import { ExportIcon } from "@/components/icons/vuesax"
 import { Button } from "@/components/ui/button"
 import { LoadingButton } from "@/components/ui/loading-button"
@@ -40,11 +41,14 @@ export function DashboardHero({
   firstName,
   notifications,
   hasActivity,
+  simulation,
 }: {
   firstName: string
   notifications: Notification[]
   /** Disables Export until there's something in the ledger. */
   hasActivity: boolean
+  /** Present once the salary account is active: shows "Simulate salary". */
+  simulation?: { defaultAmount: number | null; defaultSender: string | null }
 }) {
   const now = useLocalNow()
   const exportCsv = useExportTransactions()
@@ -84,7 +88,13 @@ export function DashboardHero({
           </p>
         </div>
 
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
+          {simulation && (
+            <SimulateSalaryButton
+              defaultAmount={simulation.defaultAmount}
+              defaultSender={simulation.defaultSender}
+            />
+          )}
           <LoadingButton
             size="xl"
             variant="outline"

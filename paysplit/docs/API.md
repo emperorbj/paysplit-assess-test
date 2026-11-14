@@ -1,11 +1,12 @@
 # PaySplit backend API
 
-- **Dev origin:** `https://paysplit-be-dev-14573850302.europe-west1.run.app`
+- **Backend:** [`../paysplit-backend`](../../paysplit-backend/README.md) (Express + Prisma + Neon, deployed on Render)
+- **Local origin:** `http://localhost:4000` · **Deployed:** `https://<service>.onrender.com`
 - **Base URL** (`NEXT_PUBLIC_API_BASE_URL`): `<origin>/api/v1`
 - **Docs:** `<origin>/docs` (Swagger UI) · `<origin>/docs-json` (OpenAPI JSON)
 - **Auth:** `Authorization: Bearer <token>` on 🔒 endpoints.
-- **CORS:** dev allows `http://localhost:3000` with `content-type, authorization`
-  and credentials.
+- **CORS:** origins come from the backend's `CORS_ORIGINS` (local: `http://localhost:3000`);
+  allowed headers `content-type, authorization, idempotency-key`.
 
 ## Error format
 
@@ -18,40 +19,24 @@
 ```
 
 - `message` may be a **string[]** for validation errors (400/422).
-- Some errors add a machine-readable `code`, e.g. `ACCOUNT_SETUP_INCOMPLETE`
-  (login before signup was finished; a new verification code is emailed).
-- Rate limits are returned in `x-ratelimit-limit / -remaining / -reset` headers
-  (e.g. signup 5/min, resend 3/min, forgot 3/min). Exceeding them returns 429.
+- Errors carry a machine-readable `code`, e.g. `ALLOCATION_EXCEEDS_SALARY`
+  (every endpoint's codes are listed in `/docs`).
+- Rate limits are returned in the `RateLimit` / `RateLimit-Policy` headers
+  (signup 5/min, login 10/min, KYC and money moves 10/min). Exceeding them returns 429.
 
 ## Auth flow
 
-### Sign up (3 steps), mapped to the auth modals
+There is no email verification and no forgot-password flow in this build.
 
-| Step | Endpoint                                    | Body                             | Returns                                                                                                                  | UI                                                                                             |
-| ---- | ------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| 1    | `POST /auth/signup`                         | `{ firstName, lastName, email }` | `{ message, email, resendAvailableInSeconds }`; **409** if the email exists                                              | "Create an account" → "Please check your email"                                                |
-| 1b   | `POST /auth/email/resend`                   | `{ email }`                      | `{ message, email, resendAvailableInSeconds }`                                                                           | "Didn't get a code? Click to resend" (countdown)                                               |
-| 2    | `POST /auth/email/verify`                   | `{ email, code }` (6 digits)     | `{ message, setupToken, setupTokenExpiresIn: 900, user }`; **401** wrong or expired code; code dies after 5 bad attempts | OTP modal                                                                                      |
-| 3    | `POST /auth/password/set` 🔒 **setupToken** | `{ password, confirmPassword }`  | `AuthResponse`                                                                                                           | **New "Create password" step**, then "Welcome to PaySplit" (Continue to KYC / Go to Dashboard) |
+| Endpoint | Body | Returns |
+| --- | --- | --- |
+| `POST /auth/signup` | `{ firstName, lastName, email, password, confirmPassword, rememberMe? }` | `AuthResponse` (201, signed in); **409** `EMAIL_TAKEN` |
+| `POST /auth/login` | `{ email, password, rememberMe }` | `AuthResponse`. `rememberMe: true` gives a 30-day token, otherwise 24h. **401** `INVALID_CREDENTIALS` |
+| `GET /auth/me` 🔒 | none | `{ user, onboarding }` |
+| `POST /auth/logout` 🔒 | none | `{ message }`; revokes every token issued so far |
+| `POST /auth/password/change` 🔒 | `{ currentPassword, newPassword, confirmPassword }` | `{ message, accessToken, expiresIn }`; **401** `INVALID_PASSWORD` |
 
-> The current UI goes straight from OTP to Welcome. Integration needs a
-> **create-password step** between them (not in the designs; build it in the same
-> modal style).
-
-### Log in / session
-
-| Endpoint           | Body                              | Returns                                                                                                                                                                               |
-| ------------------ | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /auth/login` | `{ email, password, rememberMe }` | `AuthResponse`. `rememberMe: true` gives a 30-day token (`expiresIn: 2592000`), otherwise 24h. **401** bad credentials, or `code: ACCOUNT_SETUP_INCOMPLETE` (show the OTP step again) |
-| `GET /auth/me` 🔒  | none                              | `{ user, onboarding }`                                                                                                                                                                |
-
-### Forgot password (3 steps), for the "Forgot password" link
-
-| Step | Endpoint                          | Body                     | Returns                                      |
-| ---- | --------------------------------- | ------------------------ | -------------------------------------------- |
-| 1    | `POST /auth/password/forgot`      | `{ email }`              | `{ message }` (always 200)                   |
-| 2    | `POST /auth/password/verify-code` | `{ email, code }`        | `{ message }`; **401** invalid or expired    |
-| 3    | `POST /auth/password/reset`       | `{ email, newPassword }` | `{ message }`; **401** if step 2 wasn't done |
+Signup opens the "Welcome to PaySplit" modal (Continue to KYC / Go to Dashboard).
 
 ## Shapes
 
@@ -171,5 +156,16 @@ Ledger rows (transactions, wallet activity, wallet history) share one shape
 colour follows the sign. Split rule `value` is kobo for `fixed`, percent for
 `percentage`. Every money/rule mutation calls `useInvalidateFinance()`.
 
-Still mock (next): beneficiaries (and beneficiary rule destinations / setup
-step 3), notifications feed, password change, and the Preferences section.
+## Simulations (sandbox)
+
+| Endpoint | Hook | UI |
+| --- | --- | --- |
+| `POST /simulations/salary-credit` 🔒 | `useSimulateSalaryCredit` | Dashboard "Simulate salary" (shown once the salary account is active) |
+
+Body `{ amount (kobo), senderName?, narration?, autoSplit? = true }` with an
+`Idempotency-Key` header (one per opened form). Credits the salary account and
+runs the split immediately; returns `{ message, replayed, transaction, splitRun, salaryAccount }`.
+422 `SALARY_ACCOUNT_INACTIVE` before KYC.
+
+Still mock (out of scope for this build): beneficiaries (and beneficiary rule
+destinations / setup step 3), transaction PIN, display preferences, bank lookup.

@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 
-import { toApiError } from "@/lib/api/errors"
 import { toastError, toastSuccess, type ToastOptions } from "@/lib/api/toast"
 import {
   clearSession,
@@ -16,15 +15,12 @@ import {
 } from "@/lib/auth/session"
 import { queryKeys } from "@/lib/query-keys"
 import { authService } from "@/services/auth.service"
-import {
-  ACCOUNT_SETUP_INCOMPLETE,
-  type AuthResponse,
-  type ChangePasswordDto,
-  type LoginDto,
-  type MeResponse,
-  type SetPasswordDto,
-  type SignupDto,
-  type VerifyCodeDto,
+import type {
+  AuthResponse,
+  ChangePasswordDto,
+  LoginDto,
+  MeResponse,
+  SignupDto,
 } from "@/types/api/auth"
 
 /* --------------------------------- Session -------------------------------- */
@@ -103,92 +99,21 @@ export function useLogin(options?: ToastOptions) {
       storeSession(auth, !!dto.rememberMe)
       toastSuccess(undefined, `Welcome back, ${auth.user.firstName}!`, options)
     },
-    onError: (error) => {
-      // Signup never finished: the backend emails a fresh code. The caller
-      // moves the user to the verify step, so explain instead of erroring.
-      if (toApiError(error).code === ACCOUNT_SETUP_INCOMPLETE) {
-        if (!options?.silent) {
-          toast.warning(
-            "Finish setting up your account — we’ve emailed you a new code."
-          )
-        }
-        return
-      }
-      toastError(error, options)
-    },
+    onError: (error) => toastError(error, options),
   })
 }
 
 /* ---------------------------------- Signup -------------------------------- */
 
+/** Creates the account and signs straight in (no email verification). */
 export function useSignup(options?: ToastOptions) {
-  return useMutation({
-    mutationFn: (dto: SignupDto) => authService.signup(dto),
-    onSuccess: (data) =>
-      toastSuccess(data.message, "Check your email for a code.", options),
-    onError: (error) => toastError(error, options),
-  })
-}
-
-export function useVerifyEmail(options?: ToastOptions) {
-  return useMutation({
-    mutationFn: (dto: VerifyCodeDto) => authService.verifyEmail(dto),
-    onSuccess: (data) => toastSuccess(data.message, "Email verified.", options),
-    onError: (error) => toastError(error, options),
-  })
-}
-
-export function useResendEmailCode(options?: ToastOptions) {
-  return useMutation({
-    mutationFn: (email: string) => authService.resendEmailCode(email),
-    onSuccess: (data) =>
-      toastSuccess(data.message, "A new code is on its way.", options),
-    onError: (error) => toastError(error, options),
-  })
-}
-
-export function useSetPassword(options?: ToastOptions) {
   const storeSession = useStoreSession()
   return useMutation({
-    mutationFn: ({
-      setupToken,
-      ...dto
-    }: SetPasswordDto & { setupToken: string }) =>
-      authService.setPassword(setupToken, dto),
-    // A fresh account stays signed in for the token's lifetime.
-    onSuccess: (auth) => {
-      storeSession(auth, true)
+    mutationFn: (dto: SignupDto) => authService.signup(dto),
+    onSuccess: (auth, dto) => {
+      storeSession(auth, !!dto.rememberMe)
       toastSuccess(undefined, "Your account is ready.", options)
     },
-    onError: (error) => toastError(error, options),
-  })
-}
-
-/* ----------------------------- Forgot password ---------------------------- */
-
-export function useForgotPassword(options?: ToastOptions) {
-  return useMutation({
-    mutationFn: (email: string) => authService.forgotPassword(email),
-    onSuccess: (data) =>
-      toastSuccess(data.message, "Check your email for a code.", options),
-    onError: (error) => toastError(error, options),
-  })
-}
-
-export function useVerifyResetCode(options?: ToastOptions) {
-  return useMutation({
-    mutationFn: (dto: VerifyCodeDto) => authService.verifyResetCode(dto),
-    onSuccess: (data) => toastSuccess(data.message, "Code verified.", options),
-    onError: (error) => toastError(error, options),
-  })
-}
-
-export function useResetPassword(options?: ToastOptions) {
-  return useMutation({
-    mutationFn: (dto: { email: string; newPassword: string }) =>
-      authService.resetPassword(dto),
-    onSuccess: (data) =>
-      toastSuccess(data.message, "Password reset. Please log in.", options),
     onError: (error) => toastError(error, options),
   })
 }
